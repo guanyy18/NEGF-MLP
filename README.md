@@ -1,6 +1,6 @@
 # NEGF-MLP
 
-Machine-learning interatomic potentials (MACE-based) for voltage-biased Li-water and Li-solid-electrolyte interfaces, trained on NEGF-DFT data.
+Machine-learning interatomic potentials for voltage-biased Li-water system, trained on NEGF-DFT data.
 
 ## Structure
 
@@ -9,11 +9,11 @@ NEGF-MLP/
 ├── module/            # shared modules
 │   ├── interaction.py # equivariant MACE interaction blocks
 │   └── get_dataset.py # trajectory NPZ -> torch_geometric Dataset
-├── base/              # 0 V base model (structure-only potential)
+├── base/              # 0 V base model
 │   ├── model.py
 │   ├── node.py
 │   └── train.py
-├── delta/             # voltage-dependent delta model (E = P(R) * V)
+├── delta/             # voltage-dependent delta model
 │   ├── model_delta.py
 │   ├── node_delta.py
 │   └── train_delta.py
@@ -22,7 +22,7 @@ NEGF-MLP/
 
 ## Setup
 
-Requires PyTorch, torch_geometric, e3nn, ASE, and MACE.
+Requires PyTorch, torch_geometric, e3nn, ASE.
 
 ## Data
 
