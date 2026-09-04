@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pth
+.ipynb_checkpoints/
+.DS_Store
+
+# Datasets (too large for git; see README)
+dataset/
+
+# Torch-geometric processed caches
+processed/
+processed_*/
+base/processed_*/
+delta/processed_*/
+
+# Logs and outputs
+*.log
+nohup.out
+
+# Auto-generated train/val/test index files
+*_indices*.txt
