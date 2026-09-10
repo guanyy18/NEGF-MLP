@@ -17,7 +17,7 @@ from module.interaction import MaceInteractionBlock
 from node_delta import ConditionalAtomEmbed
 
 
-def solve_and_compute_E_z(pos: Tensor, edge_index: Tensor, batch: Optional[Tensor] = None, ptr: Optional[Tensor] = None, num_graphs: Optional[int] = None, sgn_v: float = 1.0, num_electrode: int = 52, atom_type: Optional[Tensor] = None, electrolyte_types: tuple = (1, 2)) -> Tensor:
+def solve_and_compute_E_z(pos: Tensor, edge_index: Tensor, is_boundary: Tensor, batch: Optional[Tensor] = None, ptr: Optional[Tensor] = None, num_graphs: Optional[int] = None, sgn_v: float = 1.0) -> Tensor:
     num_nodes = pos.shape[0]
 
 
@@ -46,45 +46,25 @@ def solve_and_compute_E_z(pos: Tensor, edge_index: Tensor, batch: Optional[Tenso
         L = D - A
 
 
-        boundary_mask = torch.zeros(num_nodes, dtype=torch.bool, device=pos.device)
-        Phi_B_list = []
+        if is_boundary is None:
+            raise ValueError("solve_and_compute_E_z requires an explicit is_boundary mask (metal region for the potential solve)")
 
-        p_or_s_mask = torch.isin(atom_type, torch.tensor(electrolyte_types, device=pos.device)) if atom_type is not None else torch.zeros(num_nodes, dtype=torch.bool, device=pos.device)
-
+        boundary_mask = is_boundary.to(device=pos.device, dtype=torch.bool).clone()
+        phi_vals = torch.zeros(num_nodes, dtype=torch.float32, device=pos.device)
         for g in range(num_graphs):
-            start = ptr[g].item()
-            end = ptr[g+1].item()
-
-            pos_g = pos_fp32[start:end]
-            p_or_s_g = p_or_s_mask[start:end]
-
-            if p_or_s_g.any():
-                z_g = pos_g[:, 2]
-                z_electrolyte_min = z_g[p_or_s_g].min()
-                z_electrolyte_max = z_g[p_or_s_g].max()
-
-
-                left_metal_mask_g = z_g < z_electrolyte_min
-
-                right_metal_mask_g = z_g > z_electrolyte_max
-
-                boundary_mask[start:end] = left_metal_mask_g | right_metal_mask_g
-
-                num_left_metal = left_metal_mask_g.sum().item()
-                num_right_metal = right_metal_mask_g.sum().item()
-                phi_b_g = torch.zeros((num_left_metal + num_right_metal, 1), device=pos.device, dtype=torch.float32)
-                phi_b_g[:num_left_metal] = 1.0 * sgn_v
-                phi_b_g[num_left_metal:] = -1.0 * sgn_v
-                Phi_B_list.append(phi_b_g)
-            else:
-                boundary_mask[start : start + num_electrode] = True
-                boundary_mask[end - num_electrode : end] = True
-                phi_b_g = torch.zeros((2 * num_electrode, 1), device=pos.device, dtype=torch.float32)
-                phi_b_g[:num_electrode] = 1.0 * sgn_v
-                phi_b_g[num_electrode:] = -1.0 * sgn_v
-                Phi_B_list.append(phi_b_g)
-
-        Phi_B = torch.cat(Phi_B_list, dim=0)
+            start_g = ptr[g].item()
+            end_g = ptr[g + 1].item()
+            e_g = boundary_mask[start_g:end_g]
+            if not bool(e_g.any()):
+                continue
+            z_g = pos_fp32[start_g:end_g, 2]
+            z_e = z_g[e_g]
+            z_mid = (z_e.min() + z_e.max()) / 2.0
+            sub = phi_vals[start_g:end_g]
+            sub[e_g & (z_g <= z_mid)] = 1.0 * sgn_v
+            sub[e_g & (z_g > z_mid)] = -1.0 * sgn_v
+        boundary_indices = torch.where(boundary_mask)[0]
+        Phi_B = phi_vals[boundary_indices].unsqueeze(1)
 
         interior_indices = torch.where(~boundary_mask)[0]
         boundary_indices = torch.where(boundary_mask)[0]
@@ -204,13 +184,9 @@ class MaceModel(nn.Module):
                  lmax_center: int = 2,
                  lmax_env: int = 1,
                  is_discharge: bool = False,
-                 num_electrode: int = 52,
-                 electrolyte_types: tuple = (1, 2)
                  ):
         super().__init__()
         self.is_discharge = is_discharge
-        self.num_electrode = num_electrode
-        self.electrolyte_types = electrolyte_types
 
         self.embed = ConditionalAtomEmbed(
             n_scalar=n_scalar,
@@ -291,19 +267,18 @@ class MaceModel(nn.Module):
         sgn_v = 1.0 if v_val_first >= 0.0 else -1.0
         v_per_atom_abs = torch.abs(v_per_atom)
 
-        num_elec_attr = self.num_electrode if hasattr(self, 'num_electrode') else 52
-
+        is_boundary = getattr(data, 'is_boundary', None)
+        if is_boundary is None:
+            raise ValueError("data.is_boundary is required; build it in the graph builder")
 
         vbias_dynamic = solve_and_compute_E_z(
             data.pos,
             data.edge_index,
+            is_boundary,
             batch,
             ptr,
             num_graphs,
             sgn_v=sgn_v,
-            num_electrode=num_elec_attr,
-            atom_type=data.atom_type,
-            electrolyte_types=self.electrolyte_types
         )
         data.vbias = vbias_dynamic.detach()
 

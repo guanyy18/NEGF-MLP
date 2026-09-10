@@ -195,6 +195,23 @@ def build_graph_correct_pbc(data, cutoff=5.0):
     v_val = raw_vbias.item() if hasattr(raw_vbias, 'item') else float(raw_vbias)
     voltage_scalar = torch.tensor([[v_val]], dtype=torch.float)
 
+    is_li = (data.x == 3)
+    src_e, dst_e = edge_index[0], edge_index[1]
+    non_li_nb = torch.zeros(num_atoms, dtype=torch.long)
+    non_li_nb.index_add_(0, src_e, (~is_li[dst_e]).long())
+    deg = torch.zeros(num_atoms, dtype=torch.long)
+    deg.index_add_(0, src_e, torch.ones_like(src_e))
+    pure_li = is_li & (deg > 0) & (non_li_nb == 0)
+
+    is_water = (data.x == 1) | (data.x == 8)
+    z = pos[:, 2]
+    if bool(is_water.any()):
+        z_w_min, z_w_max = z[is_water].min(), z[is_water].max()
+        outside_water = (z < z_w_min) | (z > z_w_max)
+    else:
+        outside_water = torch.zeros(num_atoms, dtype=torch.bool)
+    is_boundary = is_li & (pure_li | outside_water)
+
     return Data(
         x=mapped_x,
         atom_type=mapped_x,
@@ -203,6 +220,7 @@ def build_graph_correct_pbc(data, cutoff=5.0):
         edge_index=edge_index,
         edge_shift=edge_shift,
         is_center=is_center,
+        is_boundary=is_boundary,
         cell=data.cell,
         energy_target=data.energy_target,
         force_target=data.force_target,
@@ -351,8 +369,6 @@ def main():
         rbf_cutoff=CUTOFF_RADIUS,
         lmax_center=LMAX_CENTER,
         lmax_env=LMAX_ENV,
-        num_electrode=36,
-        electrolyte_types=()
     ).to(device)
 
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
